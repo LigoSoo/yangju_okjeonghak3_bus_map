@@ -31,11 +31,12 @@
   .legend .alloc { margin-left: auto; color: #666; font-size: 11px; padding-left: 8px; }
   .swatch { display: inline-block; width: 22px; height: 4px; border-radius: 2px; }
   .legend .freq { margin: 6px 0 2px; padding-top: 6px; border-top: 1px solid #ddd; }
-  .legend .freq select { font-size: 12px; margin: 2px 0; }
   .legend .freq .row { font-size: 12px; line-height: 1.6; }
   .capture .legend .note, .capture .legend input, .capture .legend .all,
   .capture .legend .freq > label, .capture #freqOpts > .muted { display: none; }
-  .capture .legend .freq select { appearance: none; border: 0; padding: 0; font-weight: 700; }
+  .capture .legend select { appearance: none; border: 0; padding: 0; background: none; font: inherit; color: inherit; }
+  .day-text { display: none; } .capture .day-text { display: inline; } .capture .legend .head select { display: none; }
+  .legend .head select { font-size: 12px; }
   .fswatch { display: inline-block; width: 26px; border-radius: 2px; flex: none; }
   .legend .freq .muted { color: #666; font-size: 11px; line-height: 1.4; }
   .legend .note { color: #555; font-size: 11px; margin-top: 4px; line-height: 1.5; }
@@ -101,18 +102,23 @@ let pinned = null;   // 범례에서 클릭해 고정한 노선
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const badge = r => `<span class="badge" style="background:${colorOf[r]}">${esc(r)}</span>`;
 const range = (a, b) => a == null ? '-' : (a === b || b == null ? `${a}분` : `${a}–${b}분`);
-const weekday = r => { const s = schedOf[r]; return s && s.weekdayMin != null ? range(s.weekdayMin, s.weekdayMax) : '정보 없음'; };
+// 요일(범례 제목의 드롭다운): 범례 배차·선 설명·정류장 팝업·운행 빈도 보기가 모두 이 요일을 따른다.
+const DAYS = { weekday: '평일', sat: '토요일', sun: '일요일' };
+let day = 'weekday';
+const alloc = (r, d = day) => { const s = schedOf[r]; return s && s[d + 'Min'] != null ? range(s[d + 'Min'], s[d + 'Max']) : '정보 없음'; };
 
 // ── 운행 빈도: 길마다 선 하나, 켜진 노선들의 시간당 운행 횟수 합계를 색(연→진)과 굵기로 ──
 // 노선 하나의 시간당 운행 횟수 = 60 / ((최소 배차 + 최대 배차) / 2). 합성 배차간격 = 60 / 합계.
-const DAYS = { weekday: '평일', sat: '토요일', sun: '일요일' };
-let freqMode = false, day = 'weekday';
-const FREQ_CLASSES = [  // 합성 배차간격(분) 상한, 색(순서형 파랑 5단계, 검증 통과), 굵기(px, 줌 15 기준)
-  { max: 5, color: '#0d366b', w: 11, label: '5분 미만', sub: '시간당 12대 초과' },
-  { max: 10, color: '#184f95', w: 9, label: '5–9분', sub: '6–12대' },
-  { max: 15, color: '#256abf', w: 7, label: '10–14분', sub: '4–6대' },
-  { max: 21, color: '#3987e5', w: 5, label: '15–20분', sub: '약 3–4대' },
-  { max: Infinity, color: '#86b6ef', w: 3, label: '21분 이상', sub: '약 3대 미만' },
+let freqMode = false;
+const FREQ_CLASSES = [  // 합성 배차간격(분) 상한, 색, 굵기(px, 줌 15 기준).
+  // 색: 파랑 한 가지 5단계는 구분이 어렵다는 사용자 요청으로 여러 색조 순서형(연두→초록→청록→파랑→짙은 보라)으로 바꿈.
+  // 밝기는 한 방향(진할수록 자주), 단계 간 ΔL ≥ 0.06, 가장 옅은 단계도 지도 바탕 대비 2.25:1 (validate_palette --ordinal).
+  // 주황·분홍·노랑은 OSM 도로 색과 겹쳐서 피함.
+  { max: 5, color: '#3a1670', w: 11, label: '5분 미만', sub: '시간당 12대 초과' },
+  { max: 10, color: '#2b4f9c', w: 9, label: '5–9분', sub: '6–12대' },
+  { max: 15, color: '#1a7690', w: 7, label: '10–14분', sub: '4–6대' },
+  { max: 21, color: '#1f9670', w: 5, label: '15–20분', sub: '약 3–4대' },
+  { max: Infinity, color: '#5fb536', w: 3, label: '21분 이상', sub: '약 3대 미만' },
 ];
 const NO_DATA = { color: '#8a8a8a', w: 3, label: '배차 정보 없음', sub: '마을버스만 지나는 길' };
 const freqScale = z => (z = Math.floor(z)) >= 15 ? 1 : z === 14 ? 0.8 : z === 13 ? 0.6 : 0.45;
@@ -141,7 +147,7 @@ for (const f of LINES) {
   const line = new BundleLine(f.coords.map(([x, y]) => [y, x]),
                               { color: f.color, weight: 3, opacity: 0.9, className: 'route-line' });
   Object.assign(line, { routeName: f.routeName, direction: f.direction, tan: f.tan, nb: f.nb });
-  line.bindTooltip(`${esc(f.routeName)}번 · 평일 배차 ${weekday(f.routeName)}`, { sticky: true });
+  line.bindTooltip(() => `${esc(f.routeName)}번 · ${DAYS[day]} 배차 ${alloc(f.routeName)}`, { sticky: true });
   line.on('mouseover', () => hoverOn(f.routeName));
   line.on('mouseout', hoverOff);
   line.on('click', e => { L.DomEvent.stopPropagation(e); segmentPopup(line, e.latlng); });
@@ -181,8 +187,8 @@ const markers = STOPS.features.map(f => {
   const m = L.circleMarker([lat, lon], {
     radius: shared ? 5 : 4, weight: 1.5, color: '#fff',
     fillColor: shared ? '#333' : colorOf[p.routes[0]], fillOpacity: 0.95
-  }).bindPopup(`<div class="popup"><b>${esc(p.stationName)}</b><br>정류장번호: ${esc(p.mobileNo || '-')}<br>` +
-    `정차 노선 (평일 배차):<br>${p.routes.map(r => `${badge(r)}<span class="muted">${weekday(r)}</span>`).join(' ')}</div>`);
+  }).bindPopup(() => `<div class="popup"><b>${esc(p.stationName)}</b><br>정류장번호: ${esc(p.mobileNo || '-')}<br>` +
+    `정차 노선 (${DAYS[day]} 배차):<br>${p.routes.map(r => `${badge(r)}<span class="muted">${alloc(r)}</span>`).join(' ')}</div>`);
   m.routes = p.routes;
   return m;
 });
@@ -288,7 +294,7 @@ function segmentPopup(line, clicked) {
   for (const r of here) { const b = routeBph(r); if (b) perHour += b; else unknown.push(r); }
   const rows = here.map(r => {
     const s = schedOf[r] || {};
-    return `<tr><td>${badge(r)}</td><td>${weekday(r)}</td><td>${range(s.satMin, s.satMax)}</td>` +
+    return `<tr><td>${badge(r)}</td><td>${alloc(r, 'weekday')}</td><td>${range(s.satMin, s.satMax)}</td>` +
       `<td>${range(s.sunMin, s.sunMax)}</td><td>${s.firstTime ? esc(s.firstTime) + '–' + esc(s.lastTime) : '-'}</td></tr>`;
   }).join('');
   L.popup({ maxWidth: 420 }).setLatLng(pts[i])
@@ -368,24 +374,25 @@ function refresh() {
   highlight(pinned);
 }
 
-// 범례: 체크박스 = 켜기/끄기, 노선명 = 마우스 올리면 강조, 클릭하면 강조 고정. 오른쪽 = 평일 배차
+// 범례: 체크박스 = 켜기/끄기, 노선명 = 마우스 올리면 강조, 클릭하면 강조 고정. 오른쪽 = 제목에서 고른 요일의 배차
 let legendCollapse = () => {};
 map.on('click', () => { if (NARROW && !CAPTURE) legendCollapse(); });   // 모바일: 지도 탭하면 범례 접기
 const legend = L.control({ position: 'topright' });
 legend.onAdd = () => {
   const div = L.DomUtil.create('div', 'legend');
-  div.innerHTML = '<div class="head"><h4>양주시 버스 노선 <span class="muted" style="font-weight:400">평일 배차</span></h4>' +
+  div.innerHTML = '<div class="head"><h4>양주시 버스 노선 <span class="muted" style="font-weight:400">' +
+    `<select id="day">${Object.entries(DAYS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>` +
+    '<span class="day-text" id="dayText"></span> 배차</span></h4>' +
     '<button type="button" class="toggle" aria-expanded="true" title="범례 접기/펼치기">접기</button></div>' +
     '<div class="body">' +
     '<label class="all"><input type="checkbox" id="all" checked>전체</label>' +
     META.routes.map(r => `<div class="row" data-row="${esc(r.routeName)}">` +
       `<input type="checkbox" data-route="${esc(r.routeName)}" checked>` +
       `<span class="name" data-name="${esc(r.routeName)}"><span class="swatch" style="background:${r.color}"></span>` +
-      `${esc(r.routeName)}번<span class="alloc">${weekday(r.routeName)}</span></span></div>`).join('') +
+      `${esc(r.routeName)}번<span class="alloc" data-alloc="${esc(r.routeName)}">${alloc(r.routeName)}</span></span></div>`).join('') +
     '<div class="freq"><label><input type="checkbox" id="freq"><b>운행 빈도 보기</b></label>' +
     '<div id="freqOpts" hidden>' +
-    `<select id="day">${Object.entries(DAYS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>` +
-    ' 체크한 노선 합계 · 합성 배차간격' +
+    '<span id="freqDay"></span> · 체크한 노선 합계 · 합성 배차간격' +
     FREQ_CLASSES.concat([NO_DATA]).map(c =>
       `<div class="row"><span class="fswatch" style="height:${Math.max(2, c.w * 0.6)}px;background:${c.color}` +
       `${c === NO_DATA ? ';background:repeating-linear-gradient(90deg,' + c.color + ' 0 4px,transparent 4px 8px)' : ''}"></span>` +
@@ -413,7 +420,7 @@ legend.onAdd = () => {
   L.DomEvent.disableScrollPropagation(div);
   div.addEventListener('change', e => {
     if (e.target.id === 'freq') return setFreqMode(e.target.checked);
-    if (e.target.id === 'day') { day = e.target.value; return refresh(); }
+    if (e.target.id === 'day') return setDay(e.target.value);
     const lv = e.target.dataset.school;
     if (lv) { e.target.checked ? schoolLayers[lv].addTo(map) : map.removeLayer(schoolLayers[lv]); return placeSchoolLabels(); }
     const boxes = div.querySelectorAll('input[data-route]');
@@ -435,10 +442,18 @@ legend.onAdd = () => {
   return div;
 };
 legend.addTo(map);
+function setDay(d) {
+  day = d;
+  document.getElementById('day').value = d;
+  document.getElementById('freqDay').textContent = document.getElementById('dayText').textContent = DAYS[d];
+  document.querySelectorAll('[data-alloc]').forEach(el => el.textContent = alloc(el.dataset.alloc));
+  map.closePopup();
+  refresh();
+}
 
 // 초기 화면: 옥정동 확대 — 이름에 '옥정'이 들어간 표시 정류장이 모두 들어오는 범위, 오른쪽 범례에 가리지 않게.
 // 선의 투영·스타일 변경은 지도 view 가 정해진 뒤에 해야 하므로 refresh() 는 그 다음에 한다.
-// ?view=all 이면 전체 노선 범위. ?freq=1&day=sun 이면 운행 빈도 보기로 시작.
+// ?view=all 이면 전체 노선 범위. ?day=sat|sun 이면 그 요일 배차로, ?freq=1 이면 운행 빈도 보기로 시작.
 // 모바일은 범례가 접힌 제목줄뿐이라 옆 여백 대신 위 여백만 둔다.
 const legendEl = document.querySelector('.leaflet-top.leaflet-right .legend');
 const legendW = legendEl?.offsetWidth || 0, legendH = legendEl?.offsetHeight || 0;
@@ -447,8 +462,11 @@ const target = Q.get('view') === 'all' || !META.focus
 map.fitBounds(target, NARROW && !CAPTURE
   ? { paddingTopLeft: [10, legendH + 20], paddingBottomRight: [10, 20] }
   : { paddingTopLeft: [30, 30], paddingBottomRight: [legendW + 30, 30] });
+if (DAYS[Q.get('day')]) day = Q.get('day');
+document.getElementById('day').value = day;
+document.getElementById('freqDay').textContent = document.getElementById('dayText').textContent = DAYS[day];
+document.querySelectorAll('[data-alloc]').forEach(el => el.textContent = alloc(el.dataset.alloc));
 if (Q.get('freq')) {
-  if (DAYS[Q.get('day')]) { day = Q.get('day'); document.getElementById('day').value = day; }
   document.getElementById('freq').checked = true;
   setFreqMode(true);
 } else refresh();
